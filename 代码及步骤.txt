@@ -1,0 +1,199 @@
+任务描述：建立一个预测模型，通过从序列中提取特征，对microRNA和gene的序列关系进行预测
+数据集：microRNA的序列信息和gene信息已经提供，并且提供了一部分的关系对信息，需要使用这些关系对信息建模，预测测试集中的microRNA和gene序列是否有关系
+方法概述：首先从序列中提取3-mer的信息并且计数，获取microRNA和gene的3-mer的分布信息，再将二者拼接做成数据集，使用随机森林进行预测。
+[1]import pandas as pd
+import itertools
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn import metrics
+from sklearn.metrics import roc_auc_score
+import os
+import joblib
+1.数据准备
+1.1 数据说明
+1.2 数据预处理
+1.3 数据集生成
+[2]#数据说明
+[3]dataset=pd.read_csv('./datasets/Train.csv')
+mirna_seqdf=pd.read_csv('./datasets/mirna_seq.csv')#(['mirna', 'seq']
+gene_seqdf=pd.read_csv('./datasets/gene_seq.csv')#'label', 'sequence'
+[4]dataset_mirna=dataset['miRNA']
+dataset_gene=dataset['gene']
+dataset_label=dataset['label']
+gene_index=gene_seqdf['label'].values.tolist()
+gene_seq=gene_seqdf['sequence']
+mirna_index=mirna_seqdf['mirna'].values.tolist()
+mirna_seq=mirna_seqdf['seq']
+1.1 展示序列信息以及标签信息,以及关系对的标签信息
+[4]gene_seq.head
+[5]<bound method NDFrame.head of 0
+TGCAGCCGCGGGCCCAGGGTGCTGTTGGTGTCCTCAGAAGTGCCGG...
+1        AGATGCTTTTTTAAATTTAAGAATAAGACACACAAAACTCTATTAA...
+2        CCTGCCCGCGAAGTTGCGGACAGTGCGTGAGAAACCAGCACCCCCT...
+3        GGGGGACGGGCAGGGTGGGCCTAGGTTTGAGAGCCCTGGGGCTCCA...
+4        ATGACCAGGACAATGAAGACTGCATCAATCGTCATAATGTCTATAT...
+                               ...                        
+16122    CAGGTTTGATGCTGCCAAGTTTGTCATGAGATGGCTCTGTAAGCAT...
+16123    TAGCCATAAGTATTGGATAGTTGAATCACAGGAATCCTTTTTGTGA...
+16124    AGGCATGGAATAGGTGCTCTGACCTCTGACCCTCTAGCCCAGGGAG...
+16125    CTCCTTTTTGATCCTGTCCCTCACCCACCTTCACACACACACACGC...
+16126    GGCCAGGTCCAGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGG...
+Name: sequence, Length: 16127, dtype: object>
+[6]gene_index[0:10]
+[6]['A1BG',
+ 'A1CF',
+   'A2BP1',
+   'A2LD1',
+   'A2M',
+   'A2ML1',
+   'A4GNT',
+   'AAAS',
+   'AACS',
+   'AADAC']
+[7]dataset_label.head
+[7]<bound method NDFrame.head of 0          Functional MTI
+1          Functional MTI
+2      Non-Functional MTI
+3          Functional MTI
+4      Non-Functional MTI
+                ...        
+733        Functional MTI
+734        Functional MTI
+735        Functional MTI
+736        Functional MTI
+737        Functional MTI
+Name: label, Length: 738, dtype: object>
+[8]dataset.columns
+[8]Index(['gene', 'miRNA', 'label'], dtype='object')
+1.2 数据预处理，特征提取和生成
+[9]key_set={}
+key_set_T={}
+for i in itertools.product('UCGA', repeat =3):#itertools.product('BCDEF', repeat = 2):
+     #print(i)
+     obj=''.join(i)
+    # print(obj)
+     ky={'{}'.format(obj):0}
+     key_set.update(ky)
+for i in itertools.product('TCGA', repeat =3):#itertools.product('BCDEF', repeat = 2):
+     #print(i)
+     obj=''.join(i)
+    # print(obj)
+     ky={'{}'.format(obj):0}
+     key_set_T.update(ky)
+    
+[10]def clean_key_set(key_set):
+     for i,key in enumerate(key_set):
+     #print(i,key,key_set[key])
+       key_set[key]=0
+     return key_set
+def return_features(n,seq):
+     clean_key_set(key_set)
+     key=key_set
+     if '\n' in seq:
+         seq=seq[0:-1]
+     for i in range(n,len(seq)+1-n):
+         win=seq[i:i+n]
+         #print(win)
+         ori=key_set['{}'.format(win)]
+         key_set['{}'.format(win)]=ori+1
+     return key_set
+def return_gene_features(n,seq):
+     clean_key_set(key_set_T)
+     key=key_set_T
+     if '\n' in seq:
+         seq=seq[0:-1]
+     for i in range(n,len(seq)+1-n):
+         win=seq[i:i+n]
+         #print(win)
+         ori=key_set_T['{}'.format(win)]
+         key_set_T['{}'.format(win)]=ori+1
+     return key_set_T
+1.3 使用拼接方法构建数据集
+[11]def construct_dataset(dataset_mirna,dataset_gene):
+     list_mirna_feature=[]
+     list_gene_feature=[]
+     for i in range(0,len(dataset_mirna)):
+         try:
+             mirna=dataset_mirna[i]
+             m_index=mirna_index.index(mirna)
+             #print(m_index)
+             mirna_f=return_features(3,mirna_seq[m_index]) 
+             gene=dataset_gene[i]
+             g_index=gene_index.index(gene)
+ 
+             gene_f=return_gene_features(3, gene_seq[g_index])
+             #print(gene_f)
+             mirna_feature=mirna_f.copy()
+             gene_feature=gene_f.copy()
+             list_mirna_feature.append(mirna_feature)
+             list_gene_feature.append(gene_feature)
+         except:
+             mirna=dataset_mirna[i]
+             gene=dataset_gene[i]
+             print('error detected',i,mirna,gene)
+     lmpd=pd.DataFrame(list_mirna_feature)
+     lgpd=pd.DataFrame(list_gene_feature)
+     X=pd.concat([lmpd,lgpd],axis=1)
+     return X
+[12]#标签换为数字
+Y=[]
+for i,label in enumerate(dataset_label):
+     if label =='Functional MTI':
+         Y.append(1)
+     else:
+         Y.append(0)
+[13]X=construct_dataset(dataset_mirna,dataset_gene)
+#print(X)
+#lmpd.to_csv('gene_features.csv',index=None)
+2模型训练&3.模型评估
+模型训练切分训练集调参，
+使用ACC和F1score作为评估标准
+[14]X_train, X_test, y_train, y_test = train_test_split(X, Y,test_size=0.8, random_state=2)
+[27]#切分训练集进行调参
+def train():
+   clf = RandomForestClassifier(n_estimators=30)
+   clf.fit(X_train,y_train)
+   y_p=clf.predict(X_test)
+
+   #acc = metrics.accuracy_score(y_test,y_p)
+   #print('RF_ACC',acc)
+   y_pb=clf.predict_proba(X_test)
+   #print(y_p)
+   f1score=metrics.f1_score(y_test, y_p)
+   print('RF_F1',f1score)
+   MCC=metrics.matthews_corrcoef(y_test, y_p)
+train()
+RF_F1 0.7986577181208053
+[17]#最终模型
+clf_final = RandomForestClassifier(n_estimators=30)
+clf_final.fit(X,Y)
+[17]RandomForestClassifier(n_estimators=30)
+[19]#存储模型与重新调用
+
+joblib.dump(clf_final, "./model/train_model.m") #存储
+clf_final = joblib.load("./model/train_model.m") #调用
+4.模型预测
+加载测试数据
+测试数据生成器
+预测结果
+结果展示
+生成提交文件
+[21]#加载测试数据
+#test_filenames = os.listdir("./datasets")
+df_predict=pd.read_csv('./datasets/Test_without_label.csv')
+[22]predict_mirna=df_predict['miRNA']
+predict_gene=df_predict['gene']
+[23]#测试数据生成器
+X_predict=construct_dataset(predict_mirna,predict_gene)
+[24]#预测结果
+final_result=clf_final.predict(X_predict)
+[25]#结果展示
+print(final_result)
+[1 1 1 1 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 1 1 1 1
+    1 1 1 1 1 0 0 1 1 1 1 1 0 1 1 1 1 1 1 0 1 1 1 1 1 1 1 0 1 1 1 0 1 1 1 1 1
+  1 1 0 1 0 1 1 1 1 1 1 1 0 1 0 0 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 1 1 1 1 0
+  1 1 1 1 1 1 1 1 1 1 0 0 1 1 1 1 1 1 0 1 1 1 1 1 0 1 0 1 1 1 1 1 1 1 1 1 1
+  1 0 1 1 1 1 1 1 1 0 1 0 1 1 1 0 1 1 0 1 1 1 0 1 1 0 1 1 0 1 1 1 1 1 0 1 1]
+[26]#生成提交文件
+df_predict['results']=final_result
+df_predict.to_csv('submission.csv',index=None)
